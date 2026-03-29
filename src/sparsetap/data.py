@@ -67,3 +67,47 @@ def build_dataset(data, max_lag=64):
         "num_sequences": num_sequences,
         "seq_len": seq_len,
     }
+
+
+def split_dataset_by_sequence(data, holdout_fraction=0.2, seed=42):
+    data = np.asarray(data, dtype=np.uint8)
+    if data.ndim != 2:
+        raise ValueError("data must be a 2D array")
+    if not 0.0 < holdout_fraction < 1.0:
+        raise ValueError("holdout_fraction must be between 0 and 1")
+
+    rng = np.random.default_rng(seed)
+    indices = np.arange(data.shape[0])
+    rng.shuffle(indices)
+    holdout_size = max(1, int(round(data.shape[0] * holdout_fraction)))
+    holdout_idx = np.sort(indices[:holdout_size])
+    train_idx = np.sort(indices[holdout_size:])
+    return data[train_idx], data[holdout_idx]
+
+
+def temporal_train_validation_split(dataset, validation_fraction=0.2):
+    if not 0.0 < validation_fraction < 1.0:
+        raise ValueError("validation_fraction must be between 0 and 1")
+
+    X = np.asarray(dataset["X"])
+    y = np.asarray(dataset["y"])
+    positions = np.asarray(dataset["positions"])
+
+    cutoff = np.quantile(positions, 1.0 - validation_fraction)
+    train_mask = positions < cutoff
+    valid_mask = ~train_mask
+
+    if train_mask.sum() == 0 or valid_mask.sum() == 0:
+        midpoint = max(1, int(round(len(X) * (1.0 - validation_fraction))))
+        train_mask = np.zeros(len(X), dtype=bool)
+        train_mask[:midpoint] = True
+        valid_mask = ~train_mask
+
+    return {
+        "X_train": X[train_mask],
+        "y_train": y[train_mask],
+        "X_valid": X[valid_mask],
+        "y_valid": y[valid_mask],
+        "positions_train": positions[train_mask],
+        "positions_valid": positions[valid_mask],
+    }
