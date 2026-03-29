@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import warnings
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -84,10 +85,12 @@ def _eval_accuracy_from_offsets(offsets, data_01, max_w):
     return float(np.mean(parity == y_01.astype(np.uint8)))
 
 
-def _finalize_result(method, offsets, mask_values, loss_history, data_01, data_pm, max_w, elapsed, metadata=None):
+def _finalize_result(method, offsets, mask_values, loss_history, data_01, data_pm, max_w, elapsed, converged=None, metadata=None):
     offsets = sorted(set(int(x) for x in offsets))
     bias = _eval_bias(offsets, data_pm, max_w=max_w)
     accuracy = _eval_accuracy_from_offsets(offsets, data_01, max_w=max_w)
+    if converged is None:
+        converged = abs(bias) > 0.3
     return GDResult(
         method=method,
         offsets=offsets,
@@ -96,7 +99,7 @@ def _finalize_result(method, offsets, mask_values, loss_history, data_01, data_p
         bias=float(bias),
         accuracy=float(accuracy),
         elapsed_seconds=float(elapsed),
-        converged=bool(loss_history),
+        converged=bool(converged),
         metadata=metadata or {},
     )
 
@@ -153,6 +156,7 @@ def run_soft_mask_gd(data_pm, max_w=64, n_epochs=500, batch_size=128, lr=0.1, l1
         data_pm,
         max_w,
         time.perf_counter() - start,
+        converged=None,
         metadata={"seed": seed, "lr": lr, "l1_lambda": l1_lambda},
     )
 
@@ -197,6 +201,7 @@ def run_cos_parity_gd(data_01, data_pm, max_w=64, n_steps=3000, batch_size=10000
         data_pm,
         max_w,
         time.perf_counter() - start,
+        converged=None,
         metadata={"seed": seed, "lr": lr, "l1_lambda": l1_lambda},
     )
 
@@ -259,6 +264,7 @@ def run_gumbel_mask_gd(
         data_pm,
         max_w,
         time.perf_counter() - start,
+        converged=None,
         metadata={"seed": seed, "lr": lr, "temp_start": temp_start, "temp_end": temp_end},
     )
 
@@ -309,6 +315,7 @@ def run_reinforce(data_pm, max_w=64, n_steps=5000, batch_size=128, n_samples=32,
         data_pm,
         max_w,
         time.perf_counter() - start,
+        converged=None,
         metadata={"seed": seed, "lr": lr, "n_samples": n_samples},
     )
 
@@ -363,6 +370,7 @@ def run_next_bit_mlp(data_01, max_w=64, hidden_dim=128, n_epochs=30, batch_size=
         data_pm,
         max_w,
         time.perf_counter() - start,
+        converged=None,
         metadata={"seed": seed, "hidden_dim": hidden_dim, "lr": lr},
     )
     result.accuracy = float(np.mean(preds == y_np.astype(np.uint8)))
@@ -412,11 +420,14 @@ def run_next_bit_cnn(data_01, max_w=64, n_epochs=30, batch_size=2048, lr=0.001, 
             epoch_loss += float(loss.item())
         loss_history.append(epoch_loss)
 
-    X_grad = torch.tensor(X_np, dtype=torch.float32, requires_grad=True).unsqueeze(1)
-    logits = model(X_grad)
+    X_leaf = torch.tensor(X_np, dtype=torch.float32, requires_grad=True)
+    X_input = X_leaf.unsqueeze(1)
+    logits = model(X_input)
     probs = torch.sigmoid(logits).mean()
     probs.backward()
-    importance = X_grad.grad.abs().mean(dim=0).squeeze(0).mean(dim=0).detach().cpu().numpy()
+    if X_leaf.grad is None:
+        raise RuntimeError("Failed to compute input gradients for CNN feature importance")
+    importance = X_leaf.grad.abs().mean(dim=0).detach().cpu().numpy()
 
     with torch.no_grad():
         preds = (torch.sigmoid(model(X)).squeeze(1) > 0.5).cpu().numpy().astype(np.uint8)
@@ -430,6 +441,7 @@ def run_next_bit_cnn(data_01, max_w=64, n_epochs=30, batch_size=2048, lr=0.001, 
         data_pm,
         max_w,
         time.perf_counter() - start,
+        converged=None,
         metadata={"seed": seed, "lr": lr},
     )
     result.accuracy = float(np.mean(preds == y_np.astype(np.uint8)))

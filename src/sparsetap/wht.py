@@ -1,4 +1,5 @@
 import math
+import warnings
 
 import numpy as np
 
@@ -15,14 +16,17 @@ def vectorized_wht(data_01: np.ndarray, data_pm: np.ndarray, w: int, verbose=Tru
         raise ValueError("data_01 and data_pm must have the same shape")
     if data_01.ndim != 2:
         raise ValueError("data arrays must be 2D")
-    if not (1 <= w <= min(32, data_01.shape[1] - 1)):
-        raise ValueError("w must be between 1 and 32 and smaller than sequence length")
+    if not (1 <= w <= min(64, data_01.shape[1] - 1)):
+        raise ValueError("w must be between 1 and 64 and smaller than sequence length")
+    if w > 30:
+        mem_gb = (1 << w) * 8 / 1e9
+        warnings.warn(f"WHT with w={w} requires ~{mem_gb:.1f}GB memory")
 
     num_seq, seq_len = data_01.shape
     num_positions = seq_len - w
-    packed = np.zeros((num_seq, num_positions), dtype=np.uint32)
+    packed = np.zeros((num_seq, num_positions), dtype=np.uint64)
     for d in range(w):
-        packed |= data_01[:, w - 1 - d : seq_len - 1 - d].astype(np.uint32) << d
+        packed |= data_01[:, w - 1 - d : seq_len - 1 - d].astype(np.uint64) << d
 
     hist_size = 1 << w
     H = np.zeros(hist_size, dtype=np.float64)

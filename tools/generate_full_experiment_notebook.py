@@ -16,6 +16,14 @@ def code_cell(source: str):
     }
 
 
+def markdown_cell(source: str):
+    return {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": source.splitlines(keepends=True),
+    }
+
+
 BOOT = """from pathlib import Path
 import json
 import sys
@@ -33,6 +41,11 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 
 
 cells = [
+    markdown_cell(
+        "# SparseTap — Full Experiment\n\n"
+        "두 가지 트랙으로 접근: **Track A (Predictive)** vs **Track B (Rule Recovery)**. "
+        "각 트랙에 GD 모델 1개 이상 포함.\n"
+    ),
     code_cell(
         BOOT
         + """
@@ -99,7 +112,12 @@ def full_evaluate(offsets, label, track="unknown", note="", data_ref=train_data,
     holdout_acc = compute_accuracy(scored["taps"], holdout_ref) if scored["taps"] else 0.0
     scored["scores"]["holdout_log_likelihood"] = float(holdout_ll)
     scored["scores"]["holdout_accuracy"] = float(holdout_acc)
-    print(f"[{label}] taps={scored['taps']} ll={scored['scores']['log_likelihood']:.3f} acc={scored['scores']['accuracy']:.4f} holdout_acc={holdout_acc:.4f}")
+    print(
+        f"[{label}] taps={scored['taps']} "
+        f"ll={scored['scores']['log_likelihood']:.3f} "
+        f"acc={scored['scores']['accuracy']:.4f} "
+        f"holdout_acc={holdout_acc:.4f}"
+    )
     return scored
 
 print("Motivation: 모든 접근법을 같은 평가 함수로 묶습니다.")
@@ -110,11 +128,15 @@ print("Analysis: 보고서 비교표의 기준점 역할을 합니다.")
 print("Failure reason: 공통 평가가 없으면 방법 간 비교가 임의적이 됩니다.")
 """
     ),
+    markdown_cell(
+        "## Track A: Predictive Modeling\n\n"
+        "다음 비트를 예측하는 모델 학습 → feature importance로 offset 후보 추출\n"
+    ),
     code_cell(
         BOOT
         + """
 single = run_single_lag_scan(train_data, prefix, max_lag=64, top_k=12, noise=0.2)
-pair = run_pair_scan(train_data, prefix, candidate_lags=[cand["taps"][0] for cand in single["candidates"][:8]], config=None) if False else run_pair_scan(train_data, prefix, max_lag=64, top_k=12, top_lags=[cand["taps"][0] for cand in single["candidates"][:8]], noise=0.2)
+pair = run_pair_scan(train_data, prefix, max_lag=64, top_k=12, top_lags=[cand["taps"][0] for cand in single["candidates"][:8]], noise=0.2)
 
 for cand in single["candidates"][:5]:
     ALL_RESULTS.append(full_evaluate(cand["taps"], f"single_lag_{cand['taps'][0]}", track="predictive", note="단일 lag 통계 스캔"))
@@ -125,7 +147,7 @@ print("Motivation: 가장 해석 가능한 baseline으로 신호가 보이는지
 print("Method: single-lag / pair scan")
 print("Expectation: 약한 lag prior를 제공할 수 있습니다.")
 print("Result: 상위 통계 후보를 ALL_RESULTS에 적재했습니다.")
-print("Analysis: 단독으로는 약하지만 search 초기화에는 유용할 수 있습니다.")
+print("Analysis: 단독으로는 약하지만 search 초기화에는 유용합니다.")
 print("Failure reason: noisy XOR 구조에서는 단일 상관만으로 정답 복원이 어렵습니다.")
 """
     ),
@@ -176,15 +198,20 @@ print("Analysis: CNN은 feature ranking은 주지만 sparse exact tap set과는 
 print("Failure reason: convolution receptive field가 XOR parity를 직접 모델링하진 못합니다.")
 """
     ),
+    markdown_cell(
+        "## Track B: Rule Recovery\n\n"
+        "숨겨진 XOR tap positions를 직접 복원하는 접근\n"
+    ),
     code_cell(
         BOOT
         + """
 data_pm = (1.0 - 2.0 * train_data).astype(np.float32)
-wht_result = run_wht_scan(train_data, data_pm, w_range=[8, 12, 16], prefix=prefix, verbose=False)
+wht_range = [16, 20, 24, 26, 28, 30, 32]
+wht_result = run_wht_scan(train_data, data_pm, w_range=wht_range, prefix=prefix, verbose=True)
 if wht_result["best_offsets"]:
     ALL_RESULTS.append(full_evaluate(wht_result["best_offsets"], "wht_scan_best", track="rule_recovery", note="Walsh-Hadamard exhaustive scan"))
 else:
-    log_failed_attempt(PROJECT_ROOT / "artifacts" / "failed_attempts.jsonl", "wht_scan", {"w_range": [8, 12, 16]}, {"signal_found": False}, "강한 bias를 찾지 못함", promising=False)
+    log_failed_attempt(PROJECT_ROOT / "artifacts" / "failed_attempts.jsonl", "wht_scan", {"w_range": wht_range}, {"signal_found": False}, "강한 bias를 찾지 못함", promising=False)
 
 print("Motivation: parity 구조를 직접 겨냥하는 exhaustive spectral scan입니다.")
 print("Method: vectorized WHT")
@@ -273,6 +300,10 @@ print("Result:", {"offsets": reinforce_result.offsets[:16], "bias": reinforce_re
 print("Analysis: variance가 크지만 이산 최적화라는 점에서 보고서 가치가 큽니다.")
 print("Failure reason: gradient variance가 커서 안정적으로 수렴하지 않을 수 있습니다.")
 """
+    ),
+    markdown_cell(
+        "## Final Evaluation & Prediction\n\n"
+        "모든 접근법의 결과를 통합 평가\n"
     ),
     code_cell(
         BOOT
